@@ -1,0 +1,1567 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CNC Plotter — Control &amp; Vector Tracing</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0e1116;
+        --panel: #161b22;
+        --panel-2: #1d242e;
+        --border: #2a323d;
+        --text: #e6e9ee;
+        --text-dim: #8992a1;
+        --ink: #ff7a3d; /* pen ink - main accent */
+        --ink-dim: #a8552a;
+        --plot: #4fd1c5; /* current machine position - cyan */
+        --grid-line: rgba(255, 255, 255, 0.055);
+        --grid-line-major: rgba(255, 255, 255, 0.11);
+        --danger: #e5484d;
+        --ok: #3fb950;
+        --radius: 8px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: "IBM Plex Sans", sans-serif;
+        min-height: 100vh;
+      }
+      header {
+        display: flex;
+        align-items: baseline;
+        gap: 14px;
+        padding: 18px 24px;
+        border-bottom: 1px solid var(--border);
+        background: linear-gradient(180deg, var(--panel), var(--bg));
+      }
+      header .mark {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--ink);
+        box-shadow: 0 0 10px var(--ink);
+      }
+      header h1 {
+        font-size: 17px;
+        font-weight: 600;
+        margin: 0;
+        letter-spacing: 0.2px;
+      }
+      header .sub {
+        color: var(--text-dim);
+        font-size: 12.5px;
+        font-family: "IBM Plex Mono", monospace;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 1fr 380px;
+        gap: 16px;
+        padding: 16px;
+        align-items: start;
+      }
+      @media (max-width: 980px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 14px 16px;
+      }
+      .panel + .panel {
+        margin-top: 14px;
+      }
+      .panel h2 {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 1.2px;
+        color: var(--text-dim);
+        margin: 0 0 12px 0;
+        font-weight: 600;
+      }
+
+      /* ===== Workspace (Machine Bed) ===== */
+      #bedWrap {
+        position: relative;
+      }
+      #bedCanvas {
+        width: 100%;
+        aspect-ratio: 1/1;
+        background: var(--panel-2);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        display: block;
+        touch-action: none;
+        cursor: crosshair;
+      }
+      .bedHud {
+        position: absolute;
+        top: 10px;
+        left: 12px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 12px;
+        color: var(--text-dim);
+        pointer-events: none;
+        line-height: 1.5;
+      }
+      .bedHud b {
+        color: var(--plot);
+      }
+      .bedHud .pen {
+        color: var(--ink);
+      }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      button {
+        font-family: "IBM Plex Sans", sans-serif;
+        font-size: 13px;
+        font-weight: 500;
+        background: var(--panel-2);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px 12px;
+        cursor: pointer;
+        transition:
+          0.12s border-color,
+          0.12s background;
+      }
+      button:hover {
+        border-color: #414c5c;
+        background: #222a35;
+      }
+      button:active {
+        transform: translateY(1px);
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      button.primary {
+        background: var(--ink);
+        border-color: var(--ink);
+        color: #1a0f08;
+        font-weight: 600;
+      }
+      button.primary:hover {
+        background: #ff8c57;
+      }
+      button.danger {
+        background: transparent;
+        border-color: var(--danger);
+        color: var(--danger);
+      }
+      button.danger:hover {
+        background: rgba(229, 72, 77, 0.12);
+      }
+      button.ghost {
+        background: transparent;
+      }
+      button:focus-visible {
+        outline: 2px solid var(--plot);
+        outline-offset: 1px;
+      }
+
+      label {
+        font-size: 12px;
+        color: var(--text-dim);
+        display: block;
+        margin-bottom: 4px;
+      }
+      input[type="number"],
+      input[type="text"],
+      select {
+        width: 100%;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        color: var(--text);
+        border-radius: 6px;
+        padding: 7px 8px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 13px;
+      }
+      input[type="range"] {
+        width: 100%;
+        accent-color: var(--ink);
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .row3 {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .field {
+        margin-bottom: 10px;
+      }
+      .hint {
+        font-size: 11.5px;
+        color: var(--text-dim);
+        margin-top: 4px;
+        line-height: 1.4;
+      }
+
+      /* ===== Connection Status ===== */
+      .statusRow {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--danger);
+        flex-shrink: 0;
+      }
+      .dot.on {
+        background: var(--ok);
+        box-shadow: 0 0 8px var(--ok);
+      }
+      .statusRow span {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 12.5px;
+        color: var(--text-dim);
+      }
+
+      .posReadout {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 22px;
+        font-weight: 600;
+        display: flex;
+        gap: 18px;
+        margin: 6px 0 14px 0;
+      }
+      .posReadout .u {
+        font-size: 11px;
+        color: var(--text-dim);
+        font-weight: 400;
+        margin-left: 3px;
+      }
+      .posReadout .x {
+        color: var(--ink);
+      }
+      .posReadout .y {
+        color: var(--plot);
+      }
+
+      /* ===== Jog pad ===== */
+      .jog {
+        display: grid;
+        grid-template-columns: repeat(3, 44px);
+        grid-template-rows: repeat(3, 40px);
+        gap: 6px;
+        justify-content: center;
+        margin: 10px 0;
+      }
+      .jog button {
+        padding: 0;
+        font-size: 16px;
+      }
+      .jog .mid {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-dim);
+        font-size: 11px;
+        font-family: "IBM Plex Mono", monospace;
+      }
+
+      /* ===== Log ===== */
+      #log {
+        background: #090b0f;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        height: 180px;
+        overflow-y: auto;
+        padding: 8px 10px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11.5px;
+        color: #9aa4b2;
+        line-height: 1.55;
+      }
+      #log .rx {
+        color: var(--plot);
+      }
+      #log .tx {
+        color: var(--ink);
+      }
+      #log .err {
+        color: var(--danger);
+      }
+
+      .progressBar {
+        height: 6px;
+        background: var(--panel-2);
+        border-radius: 99px;
+        overflow: hidden;
+        margin-top: 8px;
+      }
+      .progressBar > div {
+        height: 100%;
+        width: 0%;
+        background: var(--ink);
+        transition: width 0.15s;
+      }
+
+      .tabs {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 12px;
+      }
+      .tabs button {
+        flex: 1;
+      }
+      .tabs button.active {
+        background: var(--ink);
+        border-color: var(--ink);
+        color: #1a0f08;
+        font-weight: 600;
+      }
+      .tabPanel {
+        display: none;
+      }
+      .tabPanel.active {
+        display: block;
+      }
+
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #2a323d;
+        border-radius: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="mark"></div>
+      <h1>CNC Plotter</h1>
+      <span class="sub"
+        >web serial · vector tracing · direct control</span
+      >
+    </header>
+
+    <div class="layout">
+      <div>
+        <div class="panel">
+          <h2>Workspace (mm)</h2>
+          <div id="bedWrap">
+            <canvas id="bedCanvas" width="800" height="800"></canvas>
+            <div class="bedHud">
+              Machine: <b id="hudMachine">0.00, 0.00</b><br />
+              Pen: <span class="pen" id="hudPen">UP</span>
+            </div>
+          </div>
+          <div class="toolbar">
+            <div class="tabs" style="flex: 1; margin: 0">
+              <button id="tabDrawBtn" class="active">Freehand</button>
+              <button id="tabImageBtn">Upload Image</button>
+            </div>
+          </div>
+
+          <div id="tabDraw" class="tabPanel active" style="margin-top: 12px">
+            <p class="hint">
+              Drag mouse (or touch) on the bed to draw stroke by stroke. Release mouse
+              to finish a stroke (pen lifts up when moving to a new stroke).
+            </p>
+            <div class="toolbar">
+              <button id="undoStroke">Undo Last Stroke</button>
+              <button id="clearDraw" class="danger">Clear All</button>
+            </div>
+          </div>
+
+          <div id="tabImage" class="tabPanel" style="margin-top: 12px">
+            <div class="field">
+              <label>Select Image (JPG/PNG)</label>
+              <input type="file" id="imgFile" accept="image/*" />
+            </div>
+            <div class="field">
+              <label>Black/White Threshold: <span id="threshVal">128</span></label>
+              <input type="range" id="thresh" min="0" max="255" value="128" />
+            </div>
+            <div class="field">
+              <label
+                >Line Simplification:
+                <span id="simplifyVal">1.5</span> px</label
+              >
+              <input
+                type="range"
+                id="simplify"
+                min="0"
+                max="6"
+                step="0.1"
+                value="1.5"
+              />
+            </div>
+            <div class="toolbar">
+              <button id="traceBtn" class="primary">Convert to Vector</button>
+            </div>
+            <p class="hint">
+              This traces high-contrast contours (logos, line art, text).
+              Images with fine details/gradients yield blocky outlines — use clear line art or freehand for best results.
+            </p>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Set Drawing Position &amp; Dimensions (Bounding Box)</h2>
+          <div class="row3">
+            <div class="field">
+              <label>Width (mm)</label>
+              <input type="number" id="drawW" value="30" min="1" max="120" />
+            </div>
+            <div class="field">
+              <label>Height (mm)</label>
+              <input type="number" id="drawH" value="30" min="1" max="120" />
+            </div>
+            <div class="field">
+              <label>Keep Aspect Ratio</label>
+              <select id="keepAspect">
+                <option value="1">Yes</option>
+                <option value="0" selected>No</option>
+              </select>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Start X (mm)</label>
+              <input type="number" id="startX" value="10" min="0" max="120" />
+            </div>
+            <div class="field">
+              <label>Start Y (mm)</label>
+              <input type="number" id="startY" value="25" min="0" max="120" />
+            </div>
+          </div>
+
+          <div
+            class="row"
+            style="
+              border-top: 1px solid var(--border);
+              padding-top: 10px;
+              margin-top: 10px;
+            "
+          >
+            <div class="field">
+              <label>Image Scale (%)</label>
+              <input
+                type="number"
+                id="imgScalePct"
+                value="100"
+                min="5"
+                max="1000"
+              />
+            </div>
+            <div
+              class="field"
+              style="
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                justify-content: flex-end;
+                padding-bottom: 6px;
+              "
+            >
+              <label
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 6px;
+                  cursor: pointer;
+                  margin: 0;
+                  user-select: none;
+                "
+              >
+                <input
+                  type="checkbox"
+                  id="showBgImg"
+                  checked
+                  style="width: 16px; height: 16px; accent-color: var(--ink)"
+                />
+                <span>Show Background Image</span>
+              </label>
+              <label
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 6px;
+                  cursor: pointer;
+                  margin: 0;
+                  user-select: none;
+                "
+              >
+                <input
+                  type="checkbox"
+                  id="lockImgTransform"
+                  style="width: 16px; height: 16px; accent-color: var(--ink)"
+                />
+                <span>Lock Image Pos &amp; Size</span>
+              </label>
+            </div>
+          </div>
+
+          <p class="hint">
+            In "Upload Image" tab: scroll wheel on bed to zoom image and strokes simultaneously, drag to move both.
+          </p>
+          <p class="hint" id="pathStats">No strokes drawn yet.</p>
+        </div>
+      </div>
+
+      <div>
+        <div class="panel">
+          <h2>USB Connection</h2>
+          <div class="statusRow">
+            <div class="dot" id="connDot"></div>
+            <span id="connText">Disconnected</span>
+          </div>
+          <div class="toolbar">
+            <button id="connectBtn" class="primary">Connect USB Port</button>
+            <button id="disconnectBtn" disabled>Disconnect</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Current Position</h2>
+          <div class="posReadout">
+            <div class="x">
+              X <span id="curX">0.00</span><span class="u">mm</span>
+            </div>
+            <div class="y">
+              Y <span id="curY">0.00</span><span class="u">mm</span>
+            </div>
+          </div>
+
+          <div class="jog">
+            <div></div>
+            <button id="jogYp" disabled>▲</button>
+            <div></div>
+            <button id="jogXm" disabled>◀</button>
+            <div class="mid" id="jogStepLbl">1mm</div>
+            <button id="jogXp" disabled>▶</button>
+            <div></div>
+            <button id="jogYm" disabled>▼</button>
+            <div></div>
+          </div>
+          <div class="field">
+            <label>Step Size (jog)</label>
+            <select id="jogStep">
+              <option value="0.1">0.1 mm</option>
+              <option value="1" selected>1 mm</option>
+              <option value="5">5 mm</option>
+              <option value="10">10 mm</option>
+              <option value="20">20 mm</option>
+              <option value="50">50 mm</option>
+            </select>
+          </div>
+          <div class="toolbar">
+            <button id="penUpBtn" disabled>Pen Up (U)</button>
+            <button id="penDownBtn" disabled>Pen Down (D)</button>
+            <button id="homeBtn" disabled>Home (H)</button>
+            <button id="stopBtn" class="danger" disabled>Emergency Stop</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Send Drawing</h2>
+          <div class="toolbar">
+            <button id="genBtn">Generate Commands</button>
+            <button id="sendBtn" class="primary" disabled>Send to Machine</button>
+          </div>
+          <div class="progressBar"><div id="progFill"></div></div>
+          <p
+            class="hint"
+            id="progPct"
+            style="margin-top: 5px; font-weight: 500; color: var(--plot)"
+          >
+            Progress: 0% (0/0 commands)
+          </p>
+          <p class="hint" id="genStats">No commands generated.</p>
+        </div>
+
+        <div class="panel">
+          <h2>Serial Log</h2>
+          <div id="log"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      //======================================================================
+      // GLOBAL STATE
+      //======================================================================
+      const state = {
+        connected: false,
+        port: null,
+        writer: null,
+        reader: null,
+        axisLimit: 120, // mm, updated from LIMIT: on machine response
+        penDown: false,
+        curPos: { x: 0, y: 0 },
+        strokes: [], // freehand strokes: array of paths, each path is array of {x,y} in canvas px
+        tracedPaths: [], // paths traced from image (untransformed)
+        activeSource: "draw", // 'draw' | 'image'
+        drawing: false,
+        commands: [],
+        queue: [],
+        sending: false,
+        waitingAck: false,
+        waitingHomeResponse: false, // Flag waiting for response after pressing Home
+
+        // Stores separate position and dimensions for image tab
+        imgTransform: {
+          x: 20, // Top-left X (mm)
+          y: 20, // Top-left Y (mm)
+          width: 60, // Image width (mm)
+          height: 60, // Image height (mm)
+        },
+      };
+
+      const bedCanvas = document.getElementById("bedCanvas");
+      const ctx = bedCanvas.getContext("2d");
+      const BED_PX = bedCanvas.width; // square canvas, 800x800 px representing 0..axisLimit mm
+
+      function mmToPx(mm) {
+        return (mm / state.axisLimit) * BED_PX;
+      }
+      function pxToMm(px) {
+        return (px / BED_PX) * state.axisLimit;
+      }
+
+      //======================================================================
+      // DRAW MACHINE BED (grid, strokes, current position)
+      //======================================================================
+      function drawBed() {
+        ctx.clearRect(0, 0, BED_PX, BED_PX);
+        ctx.fillStyle = "#1d242e";
+        ctx.fillRect(0, 0, BED_PX, BED_PX);
+
+        // mm grid, light line every 10mm, dark line every 50mm
+        for (let mm = 0; mm <= state.axisLimit; mm += 10) {
+          const p = mmToPx(mm);
+          ctx.strokeStyle =
+            mm % 50 === 0
+              ? "rgba(255,255,255,0.11)"
+              : "rgba(255,255,255,0.055)";
+          ctx.lineWidth = mm % 50 === 0 ? 1.2 : 1;
+          ctx.beginPath();
+          ctx.moveTo(p, 0);
+          ctx.lineTo(p, BED_PX);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(0, p);
+          ctx.lineTo(BED_PX, p);
+          ctx.stroke();
+        }
+
+        // 1. Draw source image (faint) at custom position/size (Image tab only)
+        drawFaintImage();
+
+        // 2. Draw placement bounding box (dashed border)
+        drawPlacementBox();
+
+        // 3. Draw source strokes (Draw tab: direct, Image tab: scaled according to transform)
+        drawSourcePreview();
+
+        // 4. Current machine position
+        const mx = mmToPx(state.curPos.x);
+        const my = BED_PX - mmToPx(state.curPos.y); // Machine Y goes up, canvas Y goes down -> invert axis
+        ctx.beginPath();
+        ctx.arc(mx, my, 7, 0, Math.PI * 2);
+        ctx.strokeStyle = "#4fd1c5";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(mx - 11, my);
+        ctx.lineTo(mx + 11, my);
+        ctx.moveTo(mx, my - 11);
+        ctx.lineTo(mx, my + 11);
+        ctx.strokeStyle = "rgba(79,209,197,0.6)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+
+      function currentSourcePaths() {
+        return state.activeSource === "draw"
+          ? state.strokes
+          : state.tracedPaths;
+      }
+
+      // Draw preview of source strokes
+      function drawSourcePreview() {
+        if (state.activeSource === "draw") {
+          // Freehand tab: draw directly on canvas in pixel coordinates
+          const paths = state.strokes;
+          if (!paths.length) return;
+          ctx.strokeStyle = "rgba(255,122,61,0.9)";
+          ctx.lineWidth = 1.6;
+          ctx.lineJoin = "round";
+          ctx.lineCap = "round";
+          for (const p of paths) {
+            if (p.length < 2) continue;
+            ctx.beginPath();
+            ctx.moveTo(p[0].x, p[0].y);
+            for (let i = 1; i < p.length; i++) ctx.lineTo(p[i].x, p[i].y);
+            ctx.stroke();
+          }
+        } else {
+          // Image tab: Draw vectors exactly matching background image position and current scale
+          const paths = state.tracedPaths;
+          if (!paths.length) return;
+          ctx.strokeStyle = "rgba(255,122,61,0.9)";
+          ctx.lineWidth = 1.6;
+          ctx.lineJoin = "round";
+          ctx.lineCap = "round";
+
+          const x0 = mmToPx(state.imgTransform.x);
+          const y0 =
+            BED_PX -
+            mmToPx(state.imgTransform.y) -
+            mmToPx(state.imgTransform.height);
+          const pw = mmToPx(state.imgTransform.width);
+          const ph = mmToPx(state.imgTransform.height);
+
+          for (const p of paths) {
+            if (p.length < 2) continue;
+            ctx.beginPath();
+            // p[i] normalized coordinates 0 to 1
+            ctx.moveTo(x0 + p[0].x * pw, y0 + p[0].y * ph);
+            for (let i = 1; i < p.length; i++) {
+              ctx.lineTo(x0 + p[i].x * pw, y0 + p[i].y * ph);
+            }
+            ctx.stroke();
+          }
+        }
+      }
+
+      // Draw dashed cyan placement box
+      function drawPlacementBox() {
+        const w = parseFloat(document.getElementById("drawW").value) || 0;
+        const h = parseFloat(document.getElementById("drawH").value) || 0;
+        const sx = parseFloat(document.getElementById("startX").value) || 0;
+        const sy = parseFloat(document.getElementById("startY").value) || 0;
+        const x0 = mmToPx(sx);
+        const y0 = BED_PX - mmToPx(sy) - mmToPx(h);
+        const pw = mmToPx(w),
+          ph = mmToPx(h);
+        ctx.strokeStyle = "rgba(79,209,197,0.8)";
+        ctx.setLineDash([5, 4]);
+        ctx.lineWidth = 1.6;
+        ctx.strokeRect(x0, y0, pw, ph);
+        ctx.setLineDash([]);
+      }
+
+      // Display faint original image in Image tab
+      function drawFaintImage() {
+        if (state.activeSource !== "image" || !loadedImg) return;
+        // Check if display toggle is enabled
+        if (!document.getElementById("showBgImg").checked) return;
+
+        const x0 = mmToPx(state.imgTransform.x);
+        const y0 =
+          BED_PX -
+          mmToPx(state.imgTransform.y) -
+          mmToPx(state.imgTransform.height);
+        const pw = mmToPx(state.imgTransform.width);
+        const ph = mmToPx(state.imgTransform.height);
+        ctx.save();
+        ctx.globalAlpha = 0.32;
+        ctx.drawImage(loadedImg, x0, y0, pw, ph);
+        ctx.restore();
+      }
+
+      // Toggle background image display event
+      document.getElementById("showBgImg").onchange = () => {
+        drawBed();
+      };
+
+      //======================================================================
+      // FREEHAND DRAWING
+      //======================================================================
+      function canvasPtFromEvent(e) {
+        const rect = bedCanvas.getBoundingClientRect();
+        const cx = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+        const cy = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
+        return {
+          x: cx * (BED_PX / rect.width),
+          y: cy * (BED_PX / rect.height),
+        };
+      }
+
+      bedCanvas.addEventListener("pointerdown", (e) => {
+        if (state.activeSource !== "draw") return;
+        state.drawing = true;
+        state.strokes.push([canvasPtFromEvent(e)]);
+        bedCanvas.setPointerCapture(e.pointerId);
+      });
+      bedCanvas.addEventListener("pointermove", (e) => {
+        if (!state.drawing) return;
+        const pt = canvasPtFromEvent(e);
+        const cur = state.strokes[state.strokes.length - 1];
+        const last = cur[cur.length - 1];
+        if (Math.hypot(pt.x - last.x, pt.y - last.y) > 3) {
+          cur.push(pt);
+          drawBed();
+          updatePathStats();
+        }
+      });
+      function endStroke() {
+        if (!state.drawing) return;
+        state.drawing = false;
+        const cur = state.strokes[state.strokes.length - 1];
+        if (cur.length < 2) state.strokes.pop();
+        drawBed();
+        updatePathStats();
+      }
+      bedCanvas.addEventListener("pointerup", endStroke);
+      bedCanvas.addEventListener("pointerleave", endStroke);
+
+      document.getElementById("undoStroke").onclick = () => {
+        state.strokes.pop();
+        drawBed();
+        updatePathStats();
+      };
+      document.getElementById("clearDraw").onclick = () => {
+        state.strokes = [];
+        drawBed();
+        updatePathStats();
+      };
+
+      //======================================================================
+      // IMAGE TAB: SYNCHRONIZED ZOOM & MOVE FOR IMAGE AND VECTORS
+      //======================================================================
+      let originalImgAspect = 1.0;
+
+      // Sync scale % input box with actual size in mm
+      function updateScaleFromInput() {
+        if (!loadedImg) return;
+        const pct =
+          parseFloat(document.getElementById("imgScalePct").value) || 100;
+        // Standard 60mm as 100% baseline
+        const baseW = 60;
+        state.imgTransform.width = baseW * (pct / 100);
+        state.imgTransform.height = (baseW * (pct / 100)) / originalImgAspect;
+        drawBed();
+      }
+      document
+        .getElementById("imgScalePct")
+        .addEventListener("input", updateScaleFromInput);
+
+      bedCanvas.addEventListener(
+        "wheel",
+        (e) => {
+          if (state.activeSource !== "image" || !loadedImg) return;
+          if (document.getElementById("lockImgTransform").checked) return; // Locked
+          e.preventDefault();
+
+          const factor = e.deltaY < 0 ? 1.06 : 0.94;
+          const oldW = state.imgTransform.width;
+          const oldH = state.imgTransform.height;
+
+          state.imgTransform.width = Math.max(
+            2,
+            Math.min(state.axisLimit * 2, oldW * factor),
+          );
+          state.imgTransform.height =
+            state.imgTransform.width / originalImgAspect;
+
+          // Keep center fixed when zooming
+          state.imgTransform.x -= (state.imgTransform.width - oldW) / 2;
+          state.imgTransform.y -= (state.imgTransform.height - oldH) / 2;
+
+          // Update % input value display
+          const baseW = 60;
+          const currentPct = (state.imgTransform.width / baseW) * 100;
+          document.getElementById("imgScalePct").value = Math.round(currentPct);
+
+          drawBed();
+        },
+        { passive: false },
+      );
+
+      let panning = false,
+        panStartPt = null,
+        panOrigStart = null;
+      bedCanvas.addEventListener("pointerdown", (e) => {
+        if (state.activeSource !== "image" || !loadedImg) return;
+        if (document.getElementById("lockImgTransform").checked) return; // Locked
+        panning = true;
+        panStartPt = canvasPtFromEvent(e);
+        panOrigStart = { x: state.imgTransform.x, y: state.imgTransform.y };
+        bedCanvas.setPointerCapture(e.pointerId);
+      });
+      bedCanvas.addEventListener("pointermove", (e) => {
+        if (!panning) return;
+        const pt = canvasPtFromEvent(e);
+        const dxMm = pxToMm(pt.x - panStartPt.x);
+        const dyMm = -pxToMm(pt.y - panStartPt.y); // Canvas Y down, Machine Y up -> invert sign
+
+        state.imgTransform.x = panOrigStart.x + dxMm;
+        state.imgTransform.y = panOrigStart.y + dyMm;
+        drawBed();
+      });
+      bedCanvas.addEventListener("pointerup", () => {
+        panning = false;
+      });
+      bedCanvas.addEventListener("pointerleave", () => {
+        panning = false;
+      });
+
+      //======================================================================
+      // TABS: FREEHAND / UPLOAD IMAGE
+      //======================================================================
+      document.getElementById("tabDrawBtn").onclick = () => {
+        state.activeSource = "draw";
+        document.getElementById("tabDrawBtn").classList.add("active");
+        document.getElementById("tabImageBtn").classList.remove("active");
+        document.getElementById("tabDraw").classList.add("active");
+        document.getElementById("tabImage").classList.remove("active");
+        drawBed();
+        updatePathStats();
+      };
+      document.getElementById("tabImageBtn").onclick = () => {
+        state.activeSource = "image";
+        document.getElementById("tabImageBtn").classList.add("active");
+        document.getElementById("tabDrawBtn").classList.remove("active");
+        document.getElementById("tabImage").classList.add("active");
+        document.getElementById("tabDraw").classList.remove("active");
+        drawBed();
+        updatePathStats();
+      };
+
+      //======================================================================
+      // IMAGE VECTOR TRACING (Uses 0..1 normalized coordinate system for easy scaling)
+      //======================================================================
+      let loadedImg = null;
+      document.getElementById("imgFile").onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const img = new Image();
+        img.onload = () => {
+          loadedImg = img;
+          originalImgAspect = img.width / img.height;
+          // Reset transform to bed center
+          state.imgTransform.width = 60;
+          state.imgTransform.height = 60 / originalImgAspect;
+          state.imgTransform.x =
+            (state.axisLimit - state.imgTransform.width) / 2;
+          state.imgTransform.y =
+            (state.axisLimit - state.imgTransform.height) / 2;
+          document.getElementById("imgScalePct").value = 100;
+          drawBed();
+        };
+        img.src = URL.createObjectURL(file);
+      };
+      document.getElementById("thresh").oninput = (e) => {
+        document.getElementById("threshVal").textContent = e.target.value;
+      };
+      document.getElementById("simplify").oninput = (e) => {
+        document.getElementById("simplifyVal").textContent = e.target.value;
+      };
+
+      document.getElementById("traceBtn").onclick = () => {
+        if (!loadedImg) {
+          alert("Please select an image first.");
+          return;
+        }
+        const maxDim = 400; // Processing limit
+        const scale = Math.min(
+          maxDim / loadedImg.width,
+          maxDim / loadedImg.height,
+          1,
+        );
+        const w = Math.max(1, Math.round(loadedImg.width * scale));
+        const h = Math.max(1, Math.round(loadedImg.height * scale));
+
+        const off = document.createElement("canvas");
+        off.width = w;
+        off.height = h;
+        const octx = off.getContext("2d");
+        octx.drawImage(loadedImg, 0, 0, w, h);
+        const data = octx.getImageData(0, 0, w, h).data;
+
+        const thresh = parseInt(document.getElementById("thresh").value, 10);
+        const bin = new Uint8Array(w * h);
+        for (let i = 0; i < w * h; i++) {
+          const r = data[i * 4],
+            g = data[i * 4 + 1],
+            b = data[i * 4 + 2];
+          const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+          bin[i] = gray < thresh ? 1 : 0;
+        }
+
+        const rawPaths = traceContours(bin, w, h);
+        const tol = parseFloat(document.getElementById("simplify").value);
+        const simplified = rawPaths
+          .map((p) => simplifyRDP(p, tol))
+          .filter((p) => p.length >= 2);
+
+        // Store strokes as 0..1 normalized ratio for flexible translation/scaling
+        state.tracedPaths = simplified.map((p) =>
+          p.map((pt) => ({
+            x: pt.x / w,
+            y: pt.y / h,
+          })),
+        );
+
+        drawBed();
+        updatePathStats();
+      };
+
+      // Trace foreground contours
+      function traceContours(bin, w, h) {
+        const visited = new Uint8Array(w * h);
+        const dx = [1, 1, 0, -1, -1, -1, 0, 1];
+        const dy = [0, 1, 1, 1, 0, -1, -1, -1];
+        function fg(x, y) {
+          return x >= 0 && y >= 0 && x < w && y < h && bin[y * w + x] === 1;
+        }
+        function isBoundary(x, y) {
+          if (!fg(x, y)) return false;
+          return (
+            !fg(x - 1, y) || !fg(x + 1, y) || !fg(x, y - 1) || !fg(x, y + 1)
+          );
+        }
+
+        const paths = [];
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            if (isBoundary(x, y) && !visited[y * w + x]) {
+              const contour = mooreTrace(x, y);
+              if (contour.length > 6) paths.push(contour);
+            }
+          }
+        }
+        return paths;
+
+        function mooreTrace(sx, sy) {
+          const contour = [{ x: sx, y: sy }];
+          visited[sy * w + sx] = 1;
+          let cx = sx,
+            cy = sy,
+            dir = 7,
+            found = false;
+          for (let i = 0; i < 8; i++) {
+            const d = (dir + 1 + i) % 8;
+            const nx = cx + dx[d],
+              ny = cy + dy[d];
+            if (fg(nx, ny)) {
+              cx = nx;
+              cy = ny;
+              dir = d;
+              found = true;
+              break;
+            }
+          }
+          if (!found) return contour;
+          const sx0 = sx,
+            sy0 = sy;
+          let steps = 0,
+            maxSteps = w * h * 2;
+          while (!(cx === sx0 && cy === sy0) && steps < maxSteps) {
+            visited[cy * w + cx] = 1;
+            contour.push({ x: cx, y: cy });
+            const backDir = (dir + 5) % 8;
+            let moved = false;
+            for (let i = 0; i < 8; i++) {
+              const d = (backDir + 1 + i) % 8;
+              const nx = cx + dx[d],
+                ny = cy + dy[d];
+              if (fg(nx, ny)) {
+                cx = nx;
+                cy = ny;
+                dir = d;
+                moved = true;
+                break;
+              }
+            }
+            if (!moved) break;
+            steps++;
+          }
+          return contour;
+        }
+      }
+
+      // Douglas-Peucker
+      function simplifyRDP(points, eps) {
+        if (points.length < 3 || eps <= 0) return points;
+        function perpDist(p, a, b) {
+          const dx = b.x - a.x,
+            dy = b.y - a.y;
+          const len2 = dx * dx + dy * dy;
+          if (len2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+          let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+          t = Math.max(0, Math.min(1, t));
+          return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+        }
+        function rdp(pts) {
+          if (pts.length < 3) return pts;
+          let maxD = 0,
+            idx = 0;
+          for (let i = 1; i < pts.length - 1; i++) {
+            const d = perpDist(pts[i], pts[0], pts[pts.length - 1]);
+            if (d > maxD) {
+              maxD = d;
+              idx = i;
+            }
+          }
+          if (maxD > eps) {
+            const left = rdp(pts.slice(0, idx + 1));
+            const right = rdp(pts.slice(idx));
+            return left.slice(0, -1).concat(right);
+          }
+          return [pts[0], pts[pts.length - 1]];
+        }
+        return rdp(points);
+      }
+
+      //======================================================================
+      // STROKE STATISTICS + BOUNDING BOX UPDATE
+      //======================================================================
+      function updatePathStats() {
+        const paths = currentSourcePaths();
+        const totalPts = paths.reduce((s, p) => s + p.length, 0);
+        document.getElementById("pathStats").textContent = paths.length
+          ? `${paths.length} strokes, ${totalPts} points.`
+          : "No strokes drawn yet.";
+      }
+      ["drawW", "drawH", "startX", "startY"].forEach((id) => {
+        document.getElementById(id).addEventListener("input", drawBed);
+      });
+      document.getElementById("keepAspect").addEventListener("change", () => {
+        if (document.getElementById("keepAspect").value === "1") {
+          // Apply aspect ratio only when keeping bounding box aspect ratio
+          const w = parseFloat(document.getElementById("drawW").value) || 30;
+          document.getElementById("drawH").value = (
+            w / originalImgAspect
+          ).toFixed(1);
+        }
+        drawBed();
+      });
+
+      //======================================================================
+      // GENERATE G-CODE COMMANDS FROM STROKES (CLIPS OUTSIDE BOUNDING BOX)
+      //======================================================================
+      function generateCommands() {
+        const wantW = parseFloat(document.getElementById("drawW").value);
+        const wantH = parseFloat(document.getElementById("drawH").value);
+        const startX = parseFloat(document.getElementById("startX").value);
+        const startY = parseFloat(document.getElementById("startY").value);
+
+        // Safe bounds
+        const minX = startX;
+        const maxX = startX + wantW;
+        const minY = startY;
+        const maxY = startY + wantH;
+
+        if (state.activeSource === "draw") {
+          // PROCESS FREEHAND
+          const paths = state.strokes;
+          if (!paths.length) {
+            document.getElementById("genStats").textContent =
+              "No freehand strokes to generate commands.";
+            return;
+          }
+
+          let minSourceX = Infinity,
+            minSourceY = Infinity,
+            maxSourceX = -Infinity,
+            maxSourceY = -Infinity;
+          for (const p of paths) {
+            for (const pt of p) {
+              const mx = pxToMm(pt.x);
+              const my = state.axisLimit - pxToMm(pt.y);
+              if (mx < minSourceX) minSourceX = mx;
+              if (mx > maxSourceX) maxSourceX = mx;
+              if (my < minSourceY) minSourceY = my;
+              if (my > maxSourceY) maxSourceY = my;
+            }
+          }
+          const srcW = maxSourceX - minSourceX || 1;
+          const srcH = maxSourceY - minSourceY || 1;
+          const scale = Math.min(wantW / srcW, wantH / srcH);
+
+          const cmds = ["U"];
+          let countPointsGenerated = 0;
+
+          for (const path of paths) {
+            if (path.length < 2) continue;
+
+            // Convert and gather valid points within bounding box
+            let subPath = [];
+            for (const pt of path) {
+              const mx = pxToMm(pt.x);
+              const my = state.axisLimit - pxToMm(pt.y);
+              let rx = (mx - minSourceX) * scale + startX;
+              let ry = (my - minSourceY) * scale + startY;
+
+              // Keep point only if within bounds
+              if (rx >= minX && rx <= maxX && ry >= minY && ry <= maxY) {
+                subPath.push({ x: rx, y: ry });
+              } else {
+                // If point exceeds bounds, finish current subPath and render separately
+                if (subPath.length >= 2) {
+                  generateSubPathCmds(subPath, cmds);
+                  countPointsGenerated += subPath.length;
+                }
+                subPath = [];
+              }
+            }
+            if (subPath.length >= 2) {
+              generateSubPathCmds(subPath, cmds);
+              countPointsGenerated += subPath.length;
+            }
+          }
+
+          state.commands = cmds;
+          document.getElementById("genStats").textContent =
+            `${cmds.length} commands ready (${countPointsGenerated} valid points).`;
+          document.getElementById("sendBtn").disabled = !state.connected;
+        } else {
+          // PROCESS VECTOR IMAGE (0..1 normalized scale from original image)
+          const paths = state.tracedPaths;
+          if (!paths.length) {
+            document.getElementById("genStats").textContent =
+              "No image vectors to generate commands.";
+            return;
+          }
+
+          const cmds = ["U"];
+          let countPointsGenerated = 0;
+
+          // Calculate actual coordinates (mm) of vectors based on image transform
+          for (const path of paths) {
+            if (path.length < 2) continue;
+
+            let subPath = [];
+            for (const pt of path) {
+              let rx = state.imgTransform.x + pt.x * state.imgTransform.width;
+              // Invert Y direction in canvas display relative to machine origin
+              let ry =
+                state.imgTransform.y + (1 - pt.y) * state.imgTransform.height;
+
+              // Check if within bounds (drawW, drawH, startX, startY)
+              if (rx >= minX && rx <= maxX && ry >= minY && ry <= maxY) {
+                subPath.push({ x: rx, y: ry });
+              } else {
+                if (subPath.length >= 2) {
+                  generateSubPathCmds(subPath, cmds);
+                  countPointsGenerated += subPath.length;
+                }
+                subPath = [];
+              }
+            }
+            if (subPath.length >= 2) {
+              generateSubPathCmds(subPath, cmds);
+              countPointsGenerated += subPath.length;
+            }
+          }
+
+          state.commands = cmds;
+          document.getElementById("genStats").textContent =
+            `${cmds.length} commands ready (${countPointsGenerated} valid points).`;
+          document.getElementById("sendBtn").disabled = !state.connected;
+        }
+      }
+
+      // Motion ramping compiler for subpath
+      function generateSubPathCmds(subPath, cmds) {
+        const p0 = subPath[0];
+        cmds.push(`X${p0.x.toFixed(2)} Y${p0.y.toFixed(2)}`); // Move pen up
+        cmds.push("D"); // Pen down to start drawing
+
+        const drawPts = subPath.slice(1);
+        for (let i = 0; i < drawPts.length; i++) {
+          const p = drawPts[i];
+          let flag = "";
+          if (drawPts.length === 1) {
+            flag = "";
+          } else if (i === 0) {
+            flag = " F1"; // First point: Accelerate only
+          } else if (i === drawPts.length - 1) {
+            flag = " F2"; // Last point: Decelerate only
+          } else {
+            flag = " F0"; // Middle point: Constant speed
+          }
+          cmds.push(`X${p.x.toFixed(2)} Y${p.y.toFixed(2)}${flag}`);
+        }
+        cmds.push("U"); // Pen up
+      }
+
+      document.getElementById("genBtn").onclick = generateCommands;
+
+      //======================================================================
+      // WEB SERIAL: CONNECT / READ / WRITE
+      //======================================================================
+      const logEl = document.getElementById("log");
+      function log(msg, cls) {
+        const d = document.createElement("div");
+        if (cls) d.className = cls;
+        d.textContent = msg;
+        logEl.appendChild(d);
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      async function connectSerial() {
+        if (!("serial" in navigator)) {
+          alert(
+            "This browser does not support the Web Serial API. Please use Chrome or Edge on desktop.",
+          );
+          return;
+        }
+        try {
+          state.port = await navigator.serial.requestPort();
+          await state.port.open({ baudRate: 115200 });
+          state.writer = state.port.writable.getWriter();
+          state.connected = true;
+          updateConnUI();
+          readLoop();
+          log("Connected to USB port.", "rx");
+        } catch (e) {
+          log("Connection error: " + e.message, "err");
+        }
+      }
+
+      async function disconnectSerial() {
+        try {
+          if (state.reader) {
+            await state.reader.cancel().catch(() => {});
+          }
+          if (state.writer) {
+            state.writer.releaseLock();
+          }
+          if (state.port) {
+            await state.port.close();
+          }
+        } catch (e) {}
+        state.connected = false;
+        state.port = null;
+        state.writer = null;
+        state.reader = null;
+        updateConnUI();
+        log("Disconnected.", "err");
+      }
+
+      async function readLoop() {
+        const decoder = new TextDecoderStream();
+        const closed = state.port.readable
+          .pipeTo(decoder.writable)
+          .catch(() => {});
+        const inputStream = decoder.readable;
+        state.reader = inputStream.getReader();
+        let buf = "";
+        try {
+          while (true) {
+            const { value, done } = await state.reader.read();
+            if (done) break;
+            buf += value;
+            let idx;
+            while ((idx = buf.indexOf("\n")) >= 0) {
+              const line = buf.slice(0, idx).trim();
+              buf = buf.slice(idx + 1);
+              if (line) handleLine(line);
+            }
+          }
+        } catch (e) {
+          log("Serial connection lost: " + e.message, "err");
+        }
+        state.connected = false;
+        updateConnUI();
+      }
+
+      function handleLine(line) {
+        log("< " + line, "rx");
+        if (line.startsWith("POS:")) {
+          const parts = line.slice(4).split(",");
+          state.curPos.x = parseFloat(parts[0]);
+          state.curPos.y = parseFloat(parts[1]);
+          updatePosUI();
+
+          if (state.waitingAck) {
+            state.waitingAck = false;
+            state.queue.shift();
+            sendNextInQueue();
+          }
+        } else if (line.startsWith("LIMIT:")) {
+          state.axisLimit = parseFloat(line.slice(6)) || state.axisLimit;
+          drawBed();
+        } else if (
+          line.toUpperCase().includes("NANG BUT") ||
+          line.toUpperCase().includes("HA BUT")
+        ) {
+          state.penDown = line.toUpperCase().includes("HA BUT");
+          document.getElementById("hudPen").textContent = state.penDown
+            ? "DOWN"
+            : "UP";
+        }
+      }
+
+      async function sendLine(str) {
+        log("> " + str, "tx");
+        const encoder = new TextEncoder();
+        await state.writer.write(encoder.encode(str + "\n"));
+      }
+
+      function updateConnUI() {
+        document
+          .getElementById("connDot")
+          .classList.toggle("on", state.connected);
+        document.getElementById("connText").textContent = state.connected
+          ? "Connected"
+          : "Disconnected";
+        document.getElementById("connectBtn").disabled = state.connected;
+        document.getElementById("disconnectBtn").disabled = !state.connected;
+        [
+          "jogYp",
+          "jogYm",
+          "jogXp",
+          "jogXm",
+          "penUpBtn",
+          "penDownBtn",
+          "homeBtn",
+          "stopBtn",
+        ].forEach((id) => {
+          document.getElementById(id).disabled = !state.connected;
+        });
+        document.getElementById("sendBtn").disabled =
+          !state.connected || !state.commands.length;
+      }
+
+      document.getElementById("connectBtn").onclick = connectSerial;
+      document.getElementById("disconnectBtn").onclick = disconnectSerial;
+
+      //======================================================================
+      // COMMAND SEND QUEUE
+      //======================================================================
+      function pushQueue(cmds) {
+        state.queue.push(...cmds);
+        if (!state.sending) {
+          state.sending = true;
+          sendNextInQueue();
+        }
+      }
+      function sendNextInQueue() {
+        if (!state.queue.length) {
+          state.sending = false;
+          updateProgress(1, 1);
+
+          // Default: Lift pen and move to safe position X0 Y100 after drawing to easily retrieve paper
+          log(
+            "Drawing completed! Moving to safe position X0 Y100 to retrieve paper.",
+            "rx",
+          );
+          sendLine("U");
+          setTimeout(() => {
+            sendLine("X0.00 Y100.00");
+          }, 200);
+          return;
+        }
+        state.waitingAck = true;
+        sendLine(state.queue[0]);
+        updateProgress(
+          state.totalQueued - state.queue.length,
+          state.totalQueued,
+        );
+      }
+
+      // Update progress bar UI and detailed % progress stats
+      function updateProgress(done, total) {
+        const pct =
+          total > 0 ? Math.min(100, Math.max(0, (done / total) * 100)) : 0;
+        document.getElementById("progFill").style.width = pct + "%";
+        document.getElementById("progPct").textContent =
+          `Progress: ${pct.toFixed(1)}% (${done}/${total} commands)`;
+      }
+
+      document.getElementById("sendBtn").onclick = () => {
+        if (!state.commands.length) return;
+        state.totalQueued = state.commands.length;
+        pushQueue(state.commands.slice());
+      };
+
+      //======================================================================
+      // MANUAL CONTROL: JOG / PEN / HOME / STOP
+      //======================================================================
+      function jog(dx, dy) {
+        const step = parseFloat(document.getElementById("jogStep").value);
+        let nx = state.curPos.x + dx * step;
+        let ny = state.curPos.y + dy * step;
+        nx = Math.max(0, Math.min(state.axisLimit, nx));
+        ny = Math.max(0, Math.min(state.axisLimit, ny));
+        sendLine(`X${nx.toFixed(2)} Y${ny.toFixed(2)}`);
+      }
+      document.getElementById("jogXp").onclick = () => jog(1, 0);
+      document.getElementById("jogXm").onclick = () => jog(-1, 0);
+      document.getElementById("jogYp").onclick = () => jog(0, 1);
+      document.getElementById("jogYm").onclick = () => jog(0, -1);
+      document.getElementById("jogStep").addEventListener("change", (e) => {
+        document.getElementById("jogStepLbl").textContent =
+          e.target.value + "mm";
+      });
+
+      document.getElementById("penUpBtn").onclick = () => sendLine("U");
+      document.getElementById("penDownBtn").onclick = () => sendLine("D");
+
+      // Press Home button: Send command H and set flag waiting for microcontroller response
+      document.getElementById("homeBtn").onclick = () => {
+        if (confirm("Homing will move machine to limit switches. Continue?")) {
+          sendLine("H");
+        }
+      };
+
+      document.getElementById("stopBtn").onclick = () => {
+        sendLine("S");
+        state.queue = [];
+        state.sending = false;
+        state.waitingAck = false;
+        state.waitingHomeResponse = false;
+        updateProgress(0, 1);
+      };
+
+      //======================================================================
+      // UPDATE POSITION UI
+      //======================================================================
+      function updatePosUI() {
+        document.getElementById("curX").textContent = state.curPos.x.toFixed(2);
+        document.getElementById("curY").textContent = state.curPos.y.toFixed(2);
+        document.getElementById("hudMachine").textContent =
+          `${state.curPos.x.toFixed(2)}, ${state.curPos.y.toFixed(2)}`;
+        drawBed();
+      }
+
+      //======================================================================
+      // INITIALIZATION
+      //======================================================================
+      drawBed();
+      updatePathStats();
+      updateConnUI();
+      log("Ready. Connect USB to start.");
+    </script>
+  </body>
+</html>
